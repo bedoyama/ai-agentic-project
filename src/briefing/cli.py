@@ -8,7 +8,13 @@ import typer
 from langchain.messages import HumanMessage
 
 from briefing.config import ConfigError, get_llm, get_model_name
-from briefing.graph import ASK_RECURSION_LIMIT, build_ask_graph
+from briefing.graph import (
+    ASK_RECURSION_LIMIT,
+    RESEARCH_RECURSION_LIMIT,
+    build_ask_graph,
+    build_research_graph,
+)
+from briefing.state import initial_research_state
 from briefing.summarize import summarize_url
 
 app = typer.Typer(
@@ -130,6 +136,80 @@ def ask(question: str) -> None:
     if final_text:
         typer.echo("--- answer ---")
         typer.echo(final_text)
+
+
+def _print_research_update(
+    update: dict,
+    echo: Callable[[str], None] = typer.echo,
+) -> None:
+    for node, payload in update.items():
+        echo(f"--- {node} ---")
+        if not isinstance(payload, dict):
+            echo(str(payload))
+            continue
+        if payload.get("subquestions"):
+            echo("subquestions:")
+            for item in payload["subquestions"]:
+                echo(f"- {item}")
+        if payload.get("search_query"):
+            echo(f"search_query: {payload['search_query']}")
+        if payload.get("latest_urls"):
+            echo("urls: " + ", ".join(payload["latest_urls"]))
+        if "grade_relevant" in payload:
+            echo(f"relevant: {payload['grade_relevant']}")
+            echo(f"reason: {payload.get('grade_reason', '')}")
+            echo(f"loop: {payload.get('loop_count')}")
+        if payload.get("rewrite_query"):
+            echo(f"rewrite_query: {payload['rewrite_query']}")
+        notes = payload.get("notes") or []
+        if notes:
+            echo(_preview(notes[-1]))
+        if payload.get("draft"):
+            echo(payload["draft"])
+
+
+@app.command()
+def research(question: str) -> None:
+    """Run the research graph: decompose, search, grade, rewrite if needed, draft."""
+    try:
+        graph = build_research_graph()
+    except ConfigError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(f"Model: {get_model_name()}")
+    final: dict = {}
+    try:
+        for item in graph.stream(
+            initial_research_state(question),
+            stream_mode=["updates", "values"],
+            config={"recursion_limit": RESEARCH_RECURSION_LIMIT},
+        ):
+            mode, data = item if isinstance(item, tuple) else ("updates", item)
+            if mode == "updates":
+                _print_research_update(data)
+            elif mode == "values" and isinstance(data, dict):
+                final = data
+    except Exception as exc:
+        typer.secho(f"Failed to research: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo("--- briefing ---")
+    subquestions = final.get("subquestions") or []
+    if subquestions:
+        typer.echo("Subquestions:")
+        for item in subquestions:
+            typer.echo(f"- {item}")
+    sources = final.get("sources") or []
+    if sources:
+        typer.echo("Sources:")
+        for source in sources:
+            title = source.get("title") or ""
+            url = source.get("url") or ""
+            typer.echo(f"- {title} {url}".strip())
+    if final.get("draft"):
+        typer.echo("Draft:")
+        typer.echo(final["draft"])
 
 
 if __name__ == "__main__":

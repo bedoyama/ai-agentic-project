@@ -27,6 +27,12 @@ Ask a current-events question. The ReAct graph streams each agent/tool step, the
 uv run brief ask "Who is the current Python release manager?"
 ```
 
+Run the research graph (decompose → search → fetch → grade, rewrite if evidence is weak):
+
+```bash
+uv run brief research "What is LangGraph used for?"
+```
+
 To override the model:
 
 ```bash
@@ -46,13 +52,13 @@ cp .env.example .env
 uv run pytest
 ```
 
-These tests do not call Gemini. `brief hello`, `brief summarize`, and `brief ask` do.
+These tests do not call Gemini. `brief hello`, `brief summarize`, `brief ask`, and `brief research` do.
 
 ## Roadmap
 
 1. Scaffold + Gemini hello
 2. URL summarizer with structured output
-3. ReAct agent with search and fetch tools (this commit)
-4. Research graph with a grade-and-rewrite loop
+3. ReAct agent with search and fetch tools
+4. Research graph with a grade-and-rewrite loop (this commit)
 5. Cited briefing + critic node
 6. SQLite checkpoint + human approval
