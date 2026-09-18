@@ -1,0 +1,30 @@
+[project]
+name = "briefing"
+version = "0.1.0"
+description = "Research briefing agent built with LangChain, LangGraph, and Gemini."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.28",
+    "langchain-google-genai>=4.0",
+    "langchain>=1.0",
+    "langgraph>=1.0",
+    "python-dotenv>=1.0",
+    "typer>=0.16",
+]
+
+[project.scripts]
+brief = "briefing.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[tool.uv]
+default-groups = ["dev"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
