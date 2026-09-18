@@ -21,6 +21,12 @@ Summarize a URL into structured JSON (`title`, `url`, `key_points`, `caveats`):
 uv run brief summarize https://docs.langchain.com/oss/python/langgraph/overview
 ```
 
+Ask a current-events question. The ReAct graph streams each agent/tool step, then prints the answer:
+
+```bash
+uv run brief ask "Who is the current Python release manager?"
+```
+
 To override the model:
 
 ```bash
@@ -40,13 +46,13 @@ cp .env.example .env
 uv run pytest
 ```
 
-These tests do not call Gemini. `brief hello` and `brief summarize` do.
+These tests do not call Gemini. `brief hello`, `brief summarize`, and `brief ask` do.
 
 ## Roadmap
 
 1. Scaffold + Gemini hello
-2. URL summarizer with structured output (this commit)
-3. ReAct agent with search and fetch tools
+2. URL summarizer with structured output
+3. ReAct agent with search and fetch tools (this commit)
 4. Research graph with a grade-and-rewrite loop
 5. Cited briefing + critic node
 6. SQLite checkpoint + human approval

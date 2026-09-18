@@ -1,13 +1,18 @@
-"""LangChain tools for fetching page content."""
+"""LangChain tools for web search and fetching page content."""
 
 from __future__ import annotations
 
+import json
+import re
 from html.parser import HTMLParser
+
 import httpx
 from langchain.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from briefing.config import get_llm
+
+_URL_RE = re.compile(r"https?://[^\s)\]>'\"}]+")
 
 MAX_PAGE_CHARS = 24_000
 _HTTP_HEADERS = {
@@ -103,3 +108,85 @@ def fetch_url_context(url: str) -> str:
     Return the page title and main body text, not a summary.
     """
     return fetch_page(url)
+
+
+@tool
+def fetch_url(url: str) -> str:
+    """Open a specific URL and return its readable title and body text."""
+    return fetch_page(url)
+
+
+def extract_search_sources(response: object) -> list[dict[str, str]]:
+    """Pull citation URLs out of a Gemini google_search response."""
+    sources: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    def add(url: str | None, title: str | None = None) -> None:
+        if not url:
+            return
+        cleaned = url.rstrip(".,;")
+        if cleaned in seen:
+            return
+        seen.add(cleaned)
+        item = {"url": cleaned}
+        if title:
+            item["title"] = title
+        sources.append(item)
+
+    blocks = getattr(response, "content_blocks", None) or []
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        for annotation in block.get("annotations") or []:
+            if not isinstance(annotation, dict):
+                continue
+            extras = annotation.get("extras") or {}
+            url = annotation.get("url") or extras.get("url")
+            title = annotation.get("title") or extras.get("title")
+            add(url, title)
+
+    metadata = getattr(response, "response_metadata", None) or {}
+    grounding = (
+        metadata.get("grounding_metadata")
+        or metadata.get("groundingMetadata")
+        or {}
+    )
+    chunks = grounding.get("grounding_chunks") or grounding.get("groundingChunks") or []
+    for chunk in chunks:
+        if not isinstance(chunk, dict):
+            continue
+        web = chunk.get("web") or {}
+        add(web.get("uri") or web.get("url"), web.get("title"))
+
+    if not sources:
+        text = getattr(response, "text", "") or ""
+        for match in _URL_RE.findall(text):
+            add(match)
+
+    return sources
+
+
+def run_web_search(query: str, *, llm: ChatGoogleGenerativeAI | None = None) -> str:
+    """Search the web with Gemini google_search and return JSON (answer + sources)."""
+    model = (llm or get_llm()).bind_tools([{"google_search": {}}])
+    response = model.invoke(
+        "Search the public web for this query. Return a concise factual brief "
+        "and keep source URLs. Query:\n"
+        f"{query}"
+    )
+    payload = {
+        "query": query,
+        "answer": (response.text or "").strip(),
+        "sources": extract_search_sources(response),
+    }
+    return json.dumps(payload, indent=2)
+
+
+@tool
+def web_search(query: str) -> str:
+    """Search the public web for current facts, news, or documentation.
+
+    Returns JSON with keys query, answer, and sources (url/title).
+    Use this before answering questions that need up-to-date information.
+    """
+    return run_web_search(query)
