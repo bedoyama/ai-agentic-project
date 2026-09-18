@@ -15,6 +15,12 @@ uv run brief hello
 
 You should see `Gemini is ready.` from the default model `gemini-3.8-flash`. The Google GenAI SDK may also print an automatic-function-calling notice to the terminal; that is SDK noise, not the model reply.
 
+Summarize a URL into structured JSON (`title`, `url`, `key_points`, `caveats`):
+
+```bash
+uv run brief summarize https://docs.langchain.com/oss/python/langgraph/overview
+```
+
 To override the model:
 
 ```bash
@@ -34,12 +40,12 @@ cp .env.example .env
 uv run pytest
 ```
 
-These tests do not call Gemini. `brief hello` does.
+These tests do not call Gemini. `brief hello` and `brief summarize` do.
 
 ## Roadmap
 
-1. Scaffold + Gemini hello (this commit)
-2. URL summarizer with structured output
+1. Scaffold + Gemini hello
+2. URL summarizer with structured output (this commit)
 3. ReAct agent with search and fetch tools
 4. Research graph with a grade-and-rewrite loop
 5. Cited briefing + critic node
