@@ -14,6 +14,8 @@ from briefing.graph import (
     build_ask_graph,
     build_research_graph,
 )
+from briefing.nodes import briefing_to_markdown
+from briefing.schemas import Briefing
 from briefing.state import initial_research_state
 from briefing.summarize import summarize_url
 
@@ -164,13 +166,18 @@ def _print_research_update(
         notes = payload.get("notes") or []
         if notes:
             echo(_preview(notes[-1]))
-        if payload.get("draft"):
-            echo(payload["draft"])
+        briefing = payload.get("briefing") or {}
+        if briefing.get("headline"):
+            echo(f"headline: {briefing['headline']}")
+        if "critic_grounded" in payload:
+            echo(f"grounded: {payload['critic_grounded']}")
+            if payload.get("critic_reason"):
+                echo(payload["critic_reason"])
 
 
 @app.command()
 def research(question: str) -> None:
-    """Run the research graph: decompose, search, grade, rewrite if needed, draft."""
+    """Run the research graph and print a cited markdown briefing."""
     try:
         graph = build_research_graph()
     except ConfigError as exc:
@@ -195,21 +202,12 @@ def research(question: str) -> None:
         raise typer.Exit(code=1) from exc
 
     typer.echo("--- briefing ---")
-    subquestions = final.get("subquestions") or []
-    if subquestions:
-        typer.echo("Subquestions:")
-        for item in subquestions:
-            typer.echo(f"- {item}")
-    sources = final.get("sources") or []
-    if sources:
-        typer.echo("Sources:")
-        for source in sources:
-            title = source.get("title") or ""
-            url = source.get("url") or ""
-            typer.echo(f"- {title} {url}".strip())
-    if final.get("draft"):
-        typer.echo("Draft:")
-        typer.echo(final["draft"])
+    raw_briefing = final.get("briefing") or {}
+    if raw_briefing:
+        typer.echo(briefing_to_markdown(Briefing.model_validate(raw_briefing)))
+    if "critic_grounded" in final:
+        status = "accepted" if final.get("critic_grounded") else "rejected"
+        typer.echo(f"Critic: {status}. {final.get('critic_reason', '')}".strip())
 
 
 if __name__ == "__main__":

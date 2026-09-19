@@ -10,7 +10,7 @@ from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
 from briefing.config import get_llm
-from briefing.nodes import after_grade, make_research_nodes
+from briefing.nodes import after_critic, after_grade, make_research_nodes
 from briefing.state import ResearchState
 from briefing.tools import fetch_page, fetch_url, run_web_search, web_search
 
@@ -49,7 +49,7 @@ def build_ask_graph(
     return graph.compile()
 
 
-RESEARCH_RECURSION_LIMIT = 16
+RESEARCH_RECURSION_LIMIT = 20
 
 
 def build_research_graph(
@@ -58,7 +58,7 @@ def build_research_graph(
     search: Any = run_web_search,
     fetch: Any = fetch_page,
 ) -> Any:
-    """Compile decompose → search → fetch → grade ⇄ rewrite, then a draft briefing."""
+    """Compile decompose → search → fetch → grade ⇄ rewrite, then briefing + critic."""
     nodes = make_research_nodes(llm=llm or get_llm(), search=search, fetch=fetch)
     graph = StateGraph(ResearchState)
     graph.add_node("decompose", nodes["decompose"])
@@ -67,6 +67,7 @@ def build_research_graph(
     graph.add_node("grade", nodes["grade"])
     graph.add_node("rewrite", nodes["rewrite"])
     graph.add_node("write_briefing", nodes["write_briefing"])
+    graph.add_node("critic", nodes["critic"])
     graph.add_edge(START, "decompose")
     graph.add_edge("decompose", "search")
     graph.add_edge("search", "fetch")
@@ -77,5 +78,10 @@ def build_research_graph(
         {"rewrite": "rewrite", "write_briefing": "write_briefing"},
     )
     graph.add_edge("rewrite", "search")
-    graph.add_edge("write_briefing", END)
+    graph.add_edge("write_briefing", "critic")
+    graph.add_conditional_edges(
+        "critic",
+        after_critic,
+        {"rewrite": "rewrite", END: END},
+    )
     return graph.compile()

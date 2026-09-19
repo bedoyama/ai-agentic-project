@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -23,6 +25,55 @@ class EvidenceGrade(BaseModel):
     rewrite_query: str | None = Field(
         default=None,
         description="A better web search query if relevant is false, otherwise null",
+    )
+
+
+class Finding(BaseModel):
+    """One grounded claim in a briefing."""
+
+    claim: str = Field(description="A single factual claim")
+    source_urls: list[str] = Field(
+        description="URLs from the provided source list that support the claim"
+    )
+    confidence: Literal["high", "medium", "low"] = Field(
+        default="medium",
+        description="Confidence that the claim is supported by those sources",
+    )
+
+
+class SourceRef(BaseModel):
+    url: str
+    title: str = ""
+
+
+class Briefing(BaseModel):
+    """Cited research briefing."""
+
+    headline: str = Field(description="Short headline")
+    summary: str = Field(description="One-paragraph overview grounded in the sources")
+    findings: list[Finding] = Field(description="Concrete claims, each with source URLs")
+    open_questions: list[str] = Field(
+        default_factory=list,
+        description="What remains unknown or weakly sourced",
+    )
+    sources: list[SourceRef] = Field(
+        default_factory=list,
+        description="Sources used; copy from the provided list, do not invent URLs",
+    )
+
+
+class CriticReport(BaseModel):
+    """Whether the briefing's claims are grounded in the collected sources."""
+
+    grounded: bool = Field(description="True if every finding is supported by listed sources")
+    unsupported_claims: list[str] = Field(
+        default_factory=list,
+        description="Claims that are unsourced, invented, or cite unknown URLs",
+    )
+    reason: str = Field(description="Short explanation")
+    rewrite_query: str | None = Field(
+        default=None,
+        description="Better search query if grounded is false, otherwise null",
     )
 
 

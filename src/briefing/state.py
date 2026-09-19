@@ -38,7 +38,9 @@ class ResearchState(TypedDict):
     rewrite_query: str
     loop_count: int
     max_loops: int
-    draft: str
+    briefing: dict[str, Any]
+    critic_grounded: bool
+    critic_reason: str
 
 
 def initial_research_state(
@@ -58,5 +60,7 @@ def initial_research_state(
         "rewrite_query": "",
         "loop_count": 0,
         "max_loops": max_loops,
-        "draft": "",
+        "briefing": {},
+        "critic_grounded": False,
+        "critic_reason": "",
     }
