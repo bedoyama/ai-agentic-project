@@ -1,52 +1,54 @@
 # Research briefing agent
 
-Hands-on LangChain + LangGraph project powered by Gemini. A CLI that will grow from a hello-world call into a self-correcting research briefing agent.
+A hands-on LangChain + LangGraph CLI that turns a question into a cited briefing. It decomposes the question, searches the web with Gemini, grades evidence, rewrites the query when the evidence is weak, drafts a structured briefing, runs a critic, then pauses for you to approve or request more research.
+
+This is a learning project, not production software.
 
 ## Setup
 
-This repo reads a prepaid Gemini Developer API key from the environment. Prefer `GEMINI_API_KEY`. `GOOGLE_API_KEY` is a fallback.
+You need Python 3.12+ and [uv](https://docs.astral.sh/uv/). Get a Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey) and export it:
 
-If the key is already exported in your shell:
+```bash
+export GEMINI_API_KEY=your-key
+```
+
+`GOOGLE_API_KEY` is accepted as a fallback. Then:
 
 ```bash
 uv sync
 uv run brief hello
 ```
 
-You should see `Gemini is ready.` from the default model `gemini-3.8-flash`. The Google GenAI SDK may also print an automatic-function-calling notice to the terminal; that is SDK noise, not the model reply.
+You should see `Gemini is ready.` from the default model `gemini-3.8-flash`. The Google GenAI SDK may also print an automatic-function-calling notice; that is SDK noise, not the model reply.
 
-Summarize a URL into structured JSON (`title`, `url`, `key_points`, `caveats`):
-
-```bash
-uv run brief summarize https://docs.langchain.com/oss/python/langgraph/overview
-```
-
-Ask a current-events question. The ReAct graph streams each agent/tool step, then prints the answer:
+Optional local file (gitignored):
 
 ```bash
-uv run brief ask "Who is the current Python release manager?"
+cp .env.example .env
 ```
 
-Run the research graph. It pauses for human approval and stores the thread in `data/checkpoints.sqlite` (gitignored):
+Override the model with `export GEMINI_MODEL=gemini-3.7-flash` (or whatever AI Studio lists for your key).
 
-```bash
-uv run brief research "What is LangGraph used for?"
-```
+## Commands
 
-At the interrupt:
+| Command | What it does |
+|---|---|
+| `uv run brief hello` | Tiny Gemini ping |
+| `uv run brief summarize <url>` | Structured JSON summary of a page |
+| `uv run brief ask "..."` | ReAct loop with `web_search` and `fetch_url` |
+| `uv run brief research "..."` | Full research graph, then human approval |
+| `uv run brief research --resume THREAD_ID` | Resume a paused research thread |
+| `uv run brief replay THREAD_ID` | Dump checkpointed state and history |
+
+Research threads are stored in `data/checkpoints.sqlite` (gitignored). At the interrupt:
 
 ```
 [a]pprove / [m]ore research / [q]uit
 ```
 
-Quit leaves the thread paused. Resume or inspect it later:
+Quit leaves the thread paused. Gemini Google Search citations often use grounding-redirect URLs; the source list titles are the readable names.
 
-```bash
-uv run brief research --resume THREAD_ID
-uv run brief replay THREAD_ID
-```
-
-The command prints markdown with a headline, summary, sourced findings, and a source list. A critic node rejects claims that cite URLs that were never collected.
+Save local run output under `.out/` if you want; that directory is gitignored.
 
 ## Graph
 
@@ -63,18 +65,16 @@ START → decompose → search → fetch → grade
                                                           └─ approve → END
 ```
 
-To override the model:
+## How it was built
 
-```bash
-export GEMINI_MODEL=gemini-3.7-flash
-uv run brief hello
-```
+The git history is the curriculum. Read the commits in order:
 
-Optional local file (gitignored). Copy the example, then fill in values only if you do not already export them:
-
-```bash
-cp .env.example .env
-```
+1. Scaffold + Gemini hello
+2. URL summarizer with structured output
+3. ReAct agent with search and fetch tools
+4. Research graph with a grade-and-rewrite loop
+5. Cited briefing + critic node
+6. SQLite checkpoint + human approval
 
 ## Tests
 
@@ -82,13 +82,8 @@ cp .env.example .env
 uv run pytest
 ```
 
-These tests do not call Gemini. `brief hello`, `brief summarize`, `brief ask`, and `brief research` do. Checkpoints live in `data/checkpoints.sqlite`.
+These tests do not call Gemini. The `brief` commands above do.
 
-## Roadmap
+## License
 
-1. Scaffold + Gemini hello
-2. URL summarizer with structured output
-3. ReAct agent with search and fetch tools
-4. Research graph with a grade-and-rewrite loop
-5. Cited briefing + critic node
-6. SQLite checkpoint + human approval (this commit)
+MIT. See [LICENSE](LICENSE).

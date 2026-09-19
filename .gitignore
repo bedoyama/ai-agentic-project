@@ -9,5 +9,8 @@ build/
 .mypy_cache/
 .env
 data/
+.out/
+.out
+.idea/
 *.sqlite
 .DS_Store
