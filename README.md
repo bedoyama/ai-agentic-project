@@ -27,13 +27,41 @@ Ask a current-events question. The ReAct graph streams each agent/tool step, the
 uv run brief ask "Who is the current Python release manager?"
 ```
 
-Run the research graph (decompose → search → fetch → grade, rewrite if evidence is weak, then a cited briefing + critic):
+Run the research graph. It pauses for human approval and stores the thread in `data/checkpoints.sqlite` (gitignored):
 
 ```bash
 uv run brief research "What is LangGraph used for?"
 ```
 
+At the interrupt:
+
+```
+[a]pprove / [m]ore research / [q]uit
+```
+
+Quit leaves the thread paused. Resume or inspect it later:
+
+```bash
+uv run brief research --resume THREAD_ID
+uv run brief replay THREAD_ID
+```
+
 The command prints markdown with a headline, summary, sourced findings, and a source list. A critic node rejects claims that cite URLs that were never collected.
+
+## Graph
+
+```
+START → decompose → search → fetch → grade
+                      ↑         │
+                      │         ├─ weak evidence, loops left → rewrite ─┘
+                      │         └─ else → write_briefing → critic
+                      │                      │
+                      │                      ├─ ungrounded, loops left → rewrite ─┘
+                      │                      └─ else → human_review (interrupt)
+                      │                                   ├─ more research → rewrite ─┘
+                      └───────────────────────────────────┘
+                                                          └─ approve → END
+```
 
 To override the model:
 
@@ -54,7 +82,7 @@ cp .env.example .env
 uv run pytest
 ```
 
-These tests do not call Gemini. `brief hello`, `brief summarize`, `brief ask`, and `brief research` do.
+These tests do not call Gemini. `brief hello`, `brief summarize`, `brief ask`, and `brief research` do. Checkpoints live in `data/checkpoints.sqlite`.
 
 ## Roadmap
 
@@ -62,5 +90,5 @@ These tests do not call Gemini. `brief hello`, `brief summarize`, `brief ask`, a
 2. URL summarizer with structured output
 3. ReAct agent with search and fetch tools
 4. Research graph with a grade-and-rewrite loop
-5. Cited briefing + critic node (this commit)
-6. SQLite checkpoint + human approval
+5. Cited briefing + critic node
+6. SQLite checkpoint + human approval (this commit)

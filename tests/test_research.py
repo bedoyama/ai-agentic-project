@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.types import Command
+
 from briefing.graph import RESEARCH_RECURSION_LIMIT, build_research_graph
 from briefing.nodes import (
     after_critic,
@@ -154,6 +157,19 @@ def _fake_fetch(url: str) -> str:
     return f"Body of {url}"
 
 
+def _finish_research(llm: _FakeResearchLLM, search, fetch, state: dict) -> dict:
+    graph = build_research_graph(
+        llm=llm, search=search, fetch=fetch, checkpointer=InMemorySaver()
+    )
+    config = {
+        "configurable": {"thread_id": "test"},
+        "recursion_limit": RESEARCH_RECURSION_LIMIT,
+    }
+    graph.invoke(state, config)
+    graph.invoke(Command(resume="approve"), config)
+    return graph.get_state(config).values
+
+
 def test_strong_evidence_skips_rewrite() -> None:
     queries: list[str] = []
     llm = _FakeResearchLLM(
@@ -162,10 +178,8 @@ def test_strong_evidence_skips_rewrite() -> None:
         ],
         subquestions=["What is LangGraph?", "How does persistence work?"],
     )
-    graph = build_research_graph(llm=llm, search=_fake_search(queries), fetch=_fake_fetch)
-    result = graph.invoke(
-        initial_research_state("What is LangGraph?"),
-        config={"recursion_limit": RESEARCH_RECURSION_LIMIT},
+    result = _finish_research(
+        llm, _fake_search(queries), _fake_fetch, initial_research_state("What is LangGraph?")
     )
     assert result["loop_count"] == 1
     assert result["grade_relevant"] is True
@@ -192,10 +206,8 @@ def test_weak_evidence_rewrites_once() -> None:
         ],
         subquestions=["What is LangGraph?"],
     )
-    graph = build_research_graph(llm=llm, search=_fake_search(queries), fetch=_fake_fetch)
-    result = graph.invoke(
-        initial_research_state("What is LangGraph?"),
-        config={"recursion_limit": RESEARCH_RECURSION_LIMIT},
+    result = _finish_research(
+        llm, _fake_search(queries), _fake_fetch, initial_research_state("What is LangGraph?")
     )
     assert result["loop_count"] == 2
     assert result["grade_relevant"] is True
@@ -216,10 +228,11 @@ def test_always_weak_stops_at_max_loops() -> None:
         ],
         subquestions=["What is LangGraph?"],
     )
-    graph = build_research_graph(llm=llm, search=_fake_search(queries), fetch=_fake_fetch)
-    result = graph.invoke(
+    result = _finish_research(
+        llm,
+        _fake_search(queries),
+        _fake_fetch,
         initial_research_state("What is LangGraph?", max_loops=2),
-        config={"recursion_limit": RESEARCH_RECURSION_LIMIT},
     )
     assert result["loop_count"] == 2
     assert result["grade_relevant"] is False
@@ -275,11 +288,11 @@ def test_critic_rejects_url_not_in_sources() -> None:
     assert after_critic(merged) == "rewrite"
 
 
-def test_after_critic_stops_when_loops_exhausted() -> None:
+def test_after_critic_pauses_for_human_when_loops_exhausted() -> None:
     state = initial_research_state("q", max_loops=2)
     state["critic_grounded"] = False
     state["loop_count"] = 2
-    assert after_critic(state) == "__end__"
+    assert after_critic(state) == "human_review"
 
 
 def test_briefing_markdown_includes_sources() -> None:

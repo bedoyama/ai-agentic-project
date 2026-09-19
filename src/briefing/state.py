@@ -41,6 +41,7 @@ class ResearchState(TypedDict):
     briefing: dict[str, Any]
     critic_grounded: bool
     critic_reason: str
+    human_decision: str
 
 
 def initial_research_state(
@@ -63,4 +64,5 @@ def initial_research_state(
         "briefing": {},
         "critic_grounded": False,
         "critic_reason": "",
+        "human_decision": "",
     }

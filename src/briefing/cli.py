@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Callable
 
 import typer
 from langchain.messages import HumanMessage
+from langgraph.types import Command
 
+from briefing.checkpoint import open_sqlite_checkpointer
 from briefing.config import ConfigError, get_llm, get_model_name
 from briefing.graph import (
     ASK_RECURSION_LIMIT,
@@ -175,39 +178,132 @@ def _print_research_update(
                 echo(payload["critic_reason"])
 
 
+def _research_config(thread_id: str) -> dict:
+    return {
+        "configurable": {"thread_id": thread_id},
+        "recursion_limit": RESEARCH_RECURSION_LIMIT,
+    }
+
+
+def _print_briefing(state: dict) -> None:
+    raw_briefing = state.get("briefing") or {}
+    if raw_briefing:
+        typer.echo("--- briefing ---")
+        typer.echo(briefing_to_markdown(Briefing.model_validate(raw_briefing)))
+    if "critic_grounded" in state:
+        status = "accepted" if state.get("critic_grounded") else "rejected"
+        typer.echo(f"Critic: {status}. {state.get('critic_reason', '')}".strip())
+
+
+def _prompt_decision() -> str | dict | None:
+    choice = typer.prompt("[a]pprove / [m]ore research / [q]uit", default="a").strip().lower()
+    if choice.startswith("q"):
+        return None
+    if choice.startswith("m"):
+        extra = typer.prompt(
+            "Optional extra search query (blank to auto-pick)",
+            default="",
+        )
+        if extra.strip():
+            return {"action": "more_research", "query": extra.strip()}
+        return "more_research"
+    return "approve"
+
+
+def _stream_research(graph: object, payload: object, config: dict) -> None:
+    for item in graph.stream(  # type: ignore[attr-defined]
+        payload,
+        config,
+        stream_mode=["updates", "values"],
+    ):
+        mode, data = item if isinstance(item, tuple) else ("updates", item)
+        if mode == "updates" and isinstance(data, dict) and "__interrupt__" not in data:
+            _print_research_update(data)
+
+
 @app.command()
-def research(question: str) -> None:
-    """Run the research graph and print a cited markdown briefing."""
+def research(
+    question: str | None = typer.Argument(None, help="Research question"),
+    resume: str | None = typer.Option(None, "--resume", help="Resume a paused thread"),
+    thread_id: str | None = typer.Option(None, "--thread-id", help="Set the thread id"),
+) -> None:
+    """Run the research graph, pause for approval, and checkpoint to SQLite."""
+    if resume:
+        tid = resume
+    elif question:
+        tid = thread_id or str(uuid.uuid4())
+    else:
+        typer.secho("Provide a question or --resume THREAD_ID.", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
     try:
-        graph = build_research_graph()
+        graph = build_research_graph(checkpointer=open_sqlite_checkpointer())
     except ConfigError as exc:
         typer.secho(str(exc), fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1) from exc
 
+    config = _research_config(tid)
     typer.echo(f"Model: {get_model_name()}")
-    final: dict = {}
+    typer.echo(f"Thread: {tid}")
+
     try:
-        for item in graph.stream(
-            initial_research_state(question),
-            stream_mode=["updates", "values"],
-            config={"recursion_limit": RESEARCH_RECURSION_LIMIT},
-        ):
-            mode, data = item if isinstance(item, tuple) else ("updates", item)
-            if mode == "updates":
-                _print_research_update(data)
-            elif mode == "values" and isinstance(data, dict):
-                final = data
+        if not resume:
+            _stream_research(graph, initial_research_state(question or ""), config)
+        while True:
+            snapshot = graph.get_state(config)
+            if resume and not snapshot.values:
+                typer.secho(f"No checkpoint for thread {tid}.", fg=typer.colors.RED, err=True)
+                raise typer.Exit(code=1)
+            if not snapshot.next:
+                if snapshot.values:
+                    _print_briefing(snapshot.values)
+                    if snapshot.values.get("human_decision") == "approve":
+                        typer.echo("Approved.")
+                return
+            _print_briefing(snapshot.values)
+            decision = _prompt_decision()
+            if decision is None:
+                typer.echo(f"Paused. Resume with: uv run brief research --resume {tid}")
+                return
+            _stream_research(graph, Command(resume=decision), config)
+            resume = None
     except Exception as exc:
         typer.secho(f"Failed to research: {exc}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1) from exc
 
-    typer.echo("--- briefing ---")
-    raw_briefing = final.get("briefing") or {}
-    if raw_briefing:
-        typer.echo(briefing_to_markdown(Briefing.model_validate(raw_briefing)))
-    if "critic_grounded" in final:
-        status = "accepted" if final.get("critic_grounded") else "rejected"
-        typer.echo(f"Critic: {status}. {final.get('critic_reason', '')}".strip())
+
+@app.command()
+def replay(thread_id: str) -> None:
+    """Dump checkpointed state and history for a research thread."""
+    try:
+        graph = build_research_graph(checkpointer=open_sqlite_checkpointer())
+    except ConfigError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
+
+    config = _research_config(thread_id)
+    snapshot = graph.get_state(config)
+    if not snapshot.values:
+        typer.secho(f"No checkpoint for thread {thread_id}.", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    values = snapshot.values
+    typer.echo(f"Thread: {thread_id}")
+    typer.echo(f"Next: {snapshot.next or ('END',)}")
+    checkpoint_id = (snapshot.config or {}).get("configurable", {}).get("checkpoint_id")
+    typer.echo(f"Checkpoint: {checkpoint_id}")
+    typer.echo(f"Question: {values.get('question')}")
+    typer.echo(f"Loops: {values.get('loop_count')}/{values.get('max_loops')}")
+    typer.echo(f"Human: {values.get('human_decision') or '(waiting)'}")
+    _print_briefing(values)
+    typer.echo("--- history ---")
+    for index, hist in enumerate(graph.get_state_history(config)):
+        if index >= 20:
+            typer.echo("...")
+            break
+        nxt = hist.next or ("END",)
+        hist_id = (hist.config or {}).get("configurable", {}).get("checkpoint_id")
+        typer.echo(f"{index}: next={nxt} id={hist_id}")
 
 
 if __name__ == "__main__":

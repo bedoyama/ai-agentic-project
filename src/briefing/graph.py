@@ -10,7 +10,7 @@ from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
 from briefing.config import get_llm
-from briefing.nodes import after_critic, after_grade, make_research_nodes
+from briefing.nodes import after_critic, after_grade, after_human, make_research_nodes
 from briefing.state import ResearchState
 from briefing.tools import fetch_page, fetch_url, run_web_search, web_search
 
@@ -57,8 +57,9 @@ def build_research_graph(
     llm: Any = None,
     search: Any = run_web_search,
     fetch: Any = fetch_page,
+    checkpointer: Any = None,
 ) -> Any:
-    """Compile decompose → search → fetch → grade ⇄ rewrite, then briefing + critic."""
+    """Compile decompose → search → fetch → grade ⇄ rewrite, briefing, critic, human pause."""
     nodes = make_research_nodes(llm=llm or get_llm(), search=search, fetch=fetch)
     graph = StateGraph(ResearchState)
     graph.add_node("decompose", nodes["decompose"])
@@ -68,6 +69,7 @@ def build_research_graph(
     graph.add_node("rewrite", nodes["rewrite"])
     graph.add_node("write_briefing", nodes["write_briefing"])
     graph.add_node("critic", nodes["critic"])
+    graph.add_node("human_review", nodes["human_review"])
     graph.add_edge(START, "decompose")
     graph.add_edge("decompose", "search")
     graph.add_edge("search", "fetch")
@@ -82,6 +84,11 @@ def build_research_graph(
     graph.add_conditional_edges(
         "critic",
         after_critic,
+        {"rewrite": "rewrite", "human_review": "human_review"},
+    )
+    graph.add_conditional_edges(
+        "human_review",
+        after_human,
         {"rewrite": "rewrite", END: END},
     )
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer)

@@ -9,6 +9,7 @@ from typing import Any, Literal
 from langchain.messages import HumanMessage, SystemMessage
 
 from langgraph.graph import END
+from langgraph.types import interrupt
 
 from briefing.schemas import Briefing, CriticReport, EvidenceGrade, SourceRef, Subquestions
 from briefing.state import DEFAULT_MAX_LOOPS, ResearchState
@@ -112,10 +113,31 @@ def briefing_to_markdown(briefing: Briefing) -> str:
     return "\n".join(lines).strip() + "\n"
 
 
-def after_critic(state: ResearchState) -> Literal["rewrite", "__end__"]:
-    """Send an ungrounded briefing back to search if loops remain."""
+def after_critic(state: ResearchState) -> Literal["rewrite", "human_review"]:
+    """Auto-rewrite ungrounded briefings; otherwise pause for a human."""
     max_loops = state.get("max_loops") or DEFAULT_MAX_LOOPS
     if not state.get("critic_grounded") and state.get("loop_count", 0) < max_loops:
+        return "rewrite"
+    return "human_review"
+
+
+def parse_human_decision(decision: Any) -> tuple[str, str]:
+    """Map an interrupt resume value to (action, optional extra query)."""
+    if isinstance(decision, dict):
+        action = str(decision.get("action") or decision.get("decision") or "approve").lower()
+        query = str(decision.get("query") or "").strip()
+        if action in {"m", "more", "more_research", "more research"}:
+            return "more_research", query
+        return "approve", query
+    text = str(decision or "approve").strip().lower()
+    if text in {"m", "more", "more_research", "more research"}:
+        return "more_research", ""
+    return "approve", ""
+
+
+def after_human(state: ResearchState) -> Literal["rewrite", "__end__"]:
+    """Human can force another research loop even after the automatic cap."""
+    if state.get("human_decision") == "more_research":
         return "rewrite"
     return END
 
@@ -292,6 +314,26 @@ def make_research_nodes(
             "notes": [f"Critic rejected briefing: {reason}"],
         }
 
+    def human_review(state: ResearchState) -> dict[str, Any]:
+        payload = {
+            "question": state["question"],
+            "briefing": state.get("briefing") or {},
+            "critic_grounded": state.get("critic_grounded"),
+            "critic_reason": state.get("critic_reason") or "",
+        }
+        decision = interrupt(payload)
+        action, extra_query = parse_human_decision(decision)
+        if action == "more_research":
+            query = extra_query or (state.get("rewrite_query") or "").strip()
+            if not query:
+                query = f"additional sources for: {state['question']}"
+            return {
+                "human_decision": "more_research",
+                "rewrite_query": query,
+                "notes": [f"Human requested more research: {query}"],
+            }
+        return {"human_decision": "approve"}
+
     return {
         "decompose": decompose,
         "search": search_node,
@@ -300,4 +342,5 @@ def make_research_nodes(
         "rewrite": rewrite,
         "write_briefing": write_briefing,
         "critic": critic,
+        "human_review": human_review,
     }
